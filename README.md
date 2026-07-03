@@ -64,9 +64,8 @@ they share a service-DNS prefix and stay isolated from other tenants.
                  └──────────┘    └──────────┘      └─────────┘
 ```
 
-Deployment is done by the Internal Developer Portal from the manifests in
-[k8s/](k8s/) — the whole stack (app + backends + admin UIs + resource
-guardrails) applies as a single unit.
+Deployment is done by Internal Developer Portal - the whole stack (app + backends + admin UIs + resource
+guardrails) applies as a single unit, PLatform manages, all the k8s manifests, CI, CD, routing, capacity, while developer only focuses on building the application.
 
 ---
 
@@ -489,7 +488,6 @@ What to keep:
   [`internal/metrics`](internal/metrics/), [`internal/otel`](internal/otel/),
   and [`internal/api/middleware.go`](internal/api/middleware.go).
 - The adapter pattern in `internal/{storage,metadata,records,events,cache}`.
-- The `k8s/` manifests.
 
 What to replace:
 - The `Meta` / `Record` / `Event` types — model your own domain.
