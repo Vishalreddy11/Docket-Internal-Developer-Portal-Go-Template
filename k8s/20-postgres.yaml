@@ -1,0 +1,66 @@
+# Postgres — audit log store.
+# PVC: 250Mi (POC — thousands of audit rows fit comfortably).
+# Exposed via NodePort so a developer running the Go app on their laptop can
+# reach the DB at <any-cluster-node-ip>:30432 without kubectl port-forward.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: docket
+spec:
+  type: NodePort
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+      nodePort: 30432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: docket
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: docket
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: docket-secrets, key: POSTGRES_PASSWORD }
+            - name: POSTGRES_DB
+              value: docket
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "docket"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits:   { cpu: "500m", memory: "512Mi" }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 250Mi

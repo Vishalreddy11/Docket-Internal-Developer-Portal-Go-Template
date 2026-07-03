@@ -1,0 +1,146 @@
+services:
+  docket:
+    build: .
+    container_name: docket
+    depends_on:
+      - postgres
+      - mongo
+      - nats
+      - redis
+      - minio
+      - jaeger
+    environment:
+      DOCKET_PORT: "8080"
+      DOCKET_API_KEY: "dev-secret-change-me"
+      LOG_LEVEL: "info"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: docket
+      POSTGRES_PASSWORD: docket
+      POSTGRES_DB: docket
+      POSTGRES_SSLMODE: disable
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DB: docket
+      NATS_URL: nats://nats:4222
+      NATS_STREAM: DOCKET_EVENTS
+      NATS_SUBJECT_PREFIX: docket.files
+      REDIS_ADDR: redis:6379
+      REDIS_DB: "0"
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: docket
+      MINIO_USE_SSL: "false"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_SERVICE_NAME: docket
+    ports:
+      - "8080:8080"
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: docket-postgres
+    environment:
+      POSTGRES_USER: docket
+      POSTGRES_PASSWORD: docket
+      POSTGRES_DB: docket
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  mongo:
+    image: mongo:7
+    container_name: docket-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodata:/data/db
+
+  nats:
+    image: nats:2-alpine
+    container_name: docket-nats
+    # -js enables JetStream (persistent streams, replay, at-least-once)
+    # -m 8222 exposes the monitoring HTTP endpoint (used by NUI)
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "4222:4222"    # NATS client protocol (for docker containers AND host)
+      - "8222:8222"    # HTTP monitoring — used by NUI
+    volumes:
+      - natsdata:/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: docket-redis
+    ports:
+      - "6379:6379"
+
+  minio:
+    image: minio/minio:latest
+    container_name: docket-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # web console
+    volumes:
+      - miniodata:/data
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: docket-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"  # UI
+      - "4317:4317"    # OTLP gRPC
+      - "4318:4318"    # OTLP HTTP
+
+  # ===== Admin UIs (browse data in each backend) =====
+
+  adminer:
+    image: adminer:latest
+    container_name: docket-adminer
+    depends_on: [postgres]
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    ports:
+      - "8081:8080"
+
+  mongo-express:
+    image: mongo-express:latest
+    container_name: docket-mongo-express
+    depends_on: [mongo]
+    environment:
+      ME_CONFIG_MONGODB_SERVER: mongo
+      ME_CONFIG_MONGODB_PORT: "27017"
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: admin
+    ports:
+      - "8082:8081"
+
+  nui:
+    image: ghcr.io/nats-nui/nui:latest
+    container_name: docket-nui
+    depends_on: [nats]
+    ports:
+      - "8083:31311"   # NUI listens internally on :31311; we map it to 8083
+    volumes:
+      - nuidata:/db
+
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: docket-redis-commander
+    depends_on: [redis]
+    environment:
+      REDIS_HOSTS: local:redis:6379
+    ports:
+      - "8084:8081"
+
+volumes:
+  pgdata:
+  mongodata:
+  natsdata:
+  miniodata:
+  nuidata:

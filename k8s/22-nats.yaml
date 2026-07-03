@@ -1,0 +1,68 @@
+# NATS JetStream — event bus.
+# PVC: 500Mi for stream storage.
+# Two NodePorts:
+#   30422 → NATS client protocol (for local Go apps + external NATS clients)
+#   30822 → HTTP monitor endpoint (JSON stats; useful for NUI when running it
+#           outside the cluster)
+apiVersion: v1
+kind: Service
+metadata:
+  name: nats
+  namespace: docket
+spec:
+  type: NodePort
+  selector:
+    app: nats
+  ports:
+    - name: client
+      port: 4222
+      targetPort: 4222
+      nodePort: 30422
+    - name: monitor
+      port: 8222
+      targetPort: 8222
+      nodePort: 30822
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: nats
+  namespace: docket
+spec:
+  serviceName: nats
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nats
+  template:
+    metadata:
+      labels:
+        app: nats
+    spec:
+      containers:
+        - name: nats
+          image: nats:2-alpine
+          args: ["-js", "-sd", "/data", "-m", "8222"]
+          ports:
+            - containerPort: 4222
+            - containerPort: 8222
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8222
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests: { cpu: "50m",  memory: "64Mi"  }
+            limits:   { cpu: "200m", memory: "128Mi" }
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 500Mi

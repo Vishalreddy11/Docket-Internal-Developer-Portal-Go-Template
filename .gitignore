@@ -1,0 +1,7 @@
+.env
+*.log
+/snaplet
+/bin/
+vendor/
+.DS_Store
+__debug_bin*
