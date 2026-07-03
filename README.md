@@ -7,7 +7,7 @@ single namespace.
 
 This repository is a **template**. Developers fork it, replace the file-sharing
 business logic with their own, and ship. The wiring (config, adapters,
-graceful fallback, observability, auth, Docker/K8s manifests) stays the same.
+graceful fallback, observability, auth, Kubernetes manifests) stays the same.
 
 ---
 
@@ -15,17 +15,15 @@ graceful fallback, observability, auth, Docker/K8s manifests) stays the same.
 
 1. [What this is](#what-this-is)
 2. [Architecture](#architecture)
-3. [Quick start: docker-compose](#quick-start-docker-compose)
-4. [Quick start: minikube](#quick-start-minikube)
-5. [The six services, in plain terms](#the-six-services-in-plain-terms)
-6. [Environment variables — every key the app reads](#environment-variables--every-key-the-app-reads)
-7. [In-memory fallback (why your laptop still works offline)](#in-memory-fallback)
-8. [API endpoints](#api-endpoints)
-9. [How tracing works](#how-tracing-works)
-10. [Metrics and logs](#metrics-and-logs)
-11. [Authentication](#authentication)
-12. [Project layout](#project-layout)
-13. [Forking this template](#forking-this-template)
+3. [The six services, in plain terms](#the-six-services-in-plain-terms)
+4. [Environment variables — every key the app reads](#environment-variables--every-key-the-app-reads)
+5. [In-memory fallback (why the app still boots when a backend is down)](#in-memory-fallback)
+6. [API endpoints](#api-endpoints)
+7. [How tracing works](#how-tracing-works)
+8. [Metrics and logs](#metrics-and-logs)
+9. [Authentication](#authentication)
+10. [Project layout](#project-layout)
+11. [Forking this template](#forking-this-template)
 
 ---
 
@@ -44,13 +42,13 @@ for free — you only write the business logic.
 
 ## Architecture
 
-All six dependencies live in the **same Kubernetes namespace** (`docket`) so
+All six dependencies live in the **same Kubernetes namespace** so
 they share a service-DNS prefix and stay isolated from other tenants.
 
 ```
                               ┌──────────────────┐
-   HTTP / 8080  ──────────►   │     docket      │   ◄── OTLP /4318 ── Jaeger
-                              │  (Go binary)     │       Prom /9090  ── Prometheus
+   HTTP / Route  ─────────►   │     docket       │   ◄── OTLP ── Jaeger
+                              │  (Go binary)     │       Prom ── Prometheus
                               └────────┬─────────┘
                                        │
                        ┌───────────────┼─────────────────┐
@@ -66,142 +64,9 @@ they share a service-DNS prefix and stay isolated from other tenants.
                  └──────────┘    └──────────┘      └─────────┘
 ```
 
-## Quick start: docker-compose
-
-```bash
-# 1. Build the image and spin up everything.
-docker compose up -d --build
-
-# 2. Seed 20 demo files.
-curl -X POST -H "X-API-Key: dev-secret-change-me" \
-  'http://localhost:8080/seed?n=20'
-
-# 3. Upload a real file.
-curl -X POST -H "X-API-Key: dev-secret-change-me" \
-  -F "file=@/path/to/photo.jpg" \
-  -F "owner=alice" \
-  -F "tags=demo,important" \
-  http://localhost:8080/files
-
-# 4. Hit it with a load test.
-curl -X POST -H "X-API-Key: dev-secret-change-me" \
-  'http://localhost:8080/loadtest?n=1000&concurrency=50'
-
-# 5. Open the UIs.
-open http://localhost:8080/swagger    # Swagger UI
-open http://localhost:16686           # Jaeger traces
-open http://localhost:9001            # MinIO console (minioadmin/minioadmin)
-```
-
-## Quick start: Kubernetes (minikube, kind, OpenShift, etc.)
-
-The [k8s/](k8s/) manifests are the source of truth for how Docket is deployed
-to a real cluster. Everything — the app, the six backend services, the four
-admin UIs, resource guardrails — lives here.
-
-```bash
-# 1. Build the image into your cluster's registry
-minikube start                         # or `kind create cluster`
-eval $(minikube docker-env)
-docker build -t docket:dev .
-
-# 2. Apply every manifest in order
-kubectl apply -f k8s/
-
-# 3. Watch it come up (~30 seconds)
-kubectl -n docket get pods -w
-```
-
-That gives you **11 pods** in the `docket` namespace: the app, six backends,
-four admin UIs.
-
-### Everything is on NodePort — reach it from your laptop
-
-Every service is exposed via a `NodePort` in the `30000–30999` range so you
-can hit them from your browser or a local Go binary **without any
-port-forwarding**. Use any cluster node's IP as the host:
-
-```bash
-NODE_IP=$(minikube ip)               # or `kubectl get nodes -o wide` on other clusters
-```
-
-| Service | NodePort | Open in browser / dial from Go |
-|---|---|---|
-| Docket API (Swagger) | 30080 | http://$NODE_IP:30080/swagger |
-| Adminer (Postgres UI) | 30081 | http://$NODE_IP:30081 |
-| Mongo Express | 30082 | http://$NODE_IP:30082 |
-| NUI (NATS UI) | 30083 | http://$NODE_IP:30083 |
-| Redis Commander | 30084 | http://$NODE_IP:30084 |
-| Jaeger UI | 30686 | http://$NODE_IP:30686 |
-| MinIO Console | 30901 | http://$NODE_IP:30901 |
-| Postgres (raw) | 30432 | `$NODE_IP:30432` |
-| MongoDB (raw) | 30017 | `$NODE_IP:30017` |
-| NATS client (raw) | 30422 | `$NODE_IP:30422` |
-| NATS monitor (HTTP) | 30822 | http://$NODE_IP:30822 |
-| Redis (raw) | 30379 | `$NODE_IP:30379` |
-| MinIO S3 API | 30900 | http://$NODE_IP:30900 |
-| Jaeger OTLP HTTP | 30318 | http://$NODE_IP:30318 |
-
----
-
-## Running the Go binary locally against a deployed stack
-
-When Docket is deployed by the **Internal Developer Portal**, the six backend
-services always run in a Kubernetes cluster — never on your laptop. If you
-still want to iterate on the Go code locally (fast edit-test loop, native
-debugger, etc.) while talking to the *real* deployed backends, use the
-NodePorts:
-
-```bash
-export NODE_IP=$(minikube ip)   # or: kubectl get nodes -o wide | awk 'NR==2 {print $6}'
-
-# Point every backend env var at the cluster's NodePorts
-export POSTGRES_HOST=$NODE_IP  POSTGRES_PORT=30432
-export MONGO_URI=mongodb://$NODE_IP:30017
-export NATS_URL=nats://$NODE_IP:30422
-export REDIS_ADDR=$NODE_IP:30379
-export MINIO_ENDPOINT=$NODE_IP:30900
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://$NODE_IP:30318
-export DOCKET_API_KEY=dev-secret-change-me
-
-# Stop the in-cluster Docket app so you're the only one on the DBs
-kubectl -n docket scale deploy/docket --replicas=0
-
-# Run your local binary — same DBs, same NATS stream, same Jaeger tenant
-go run ./cmd/docket
-```
-
-Your Go binary now hits the deployed Postgres, Mongo, NATS, Redis, MinIO
-directly (via NodePort → cluster network → pod). Traces still land in the
-deployed Jaeger and show up at http://$NODE_IP:30686. You can edit code,
-`Ctrl-C`, restart — full loop in a couple of seconds.
-
-**When you're done** and want the in-cluster app back:
-
-```bash
-kubectl -n docket scale deploy/docket --replicas=1
-```
-
-### Env var cheat sheet
-
-Every backend key Docket reads is namespaced by service. Copy this block into
-your shell profile if you iterate often:
-
-```bash
-docket_local_env() {
-  export NODE_IP="${1:-$(minikube ip 2>/dev/null)}"
-  export POSTGRES_HOST=$NODE_IP  POSTGRES_PORT=30432
-  export MONGO_URI=mongodb://$NODE_IP:30017
-  export NATS_URL=nats://$NODE_IP:30422
-  export REDIS_ADDR=$NODE_IP:30379
-  export MINIO_ENDPOINT=$NODE_IP:30900
-  export OTEL_EXPORTER_OTLP_ENDPOINT=http://$NODE_IP:30318
-  export DOCKET_API_KEY=dev-secret-change-me
-  echo "docket env pointed at $NODE_IP"
-}
-# usage:   docket_local_env             # auto-detect minikube
-#          docket_local_env 10.0.0.42   # explicit node IP
-```
+Deployment is done by the Internal Developer Portal from the manifests in
+[k8s/](k8s/) — the whole stack (app + backends + admin UIs + resource
+guardrails) applies as a single unit.
 
 ---
 
@@ -210,43 +75,43 @@ docket_local_env() {
 For each service below you get:
 - **What it is** — one paragraph, no jargon.
 - **How Docket uses it** — the specific role it plays here.
-- **How to look inside** — the admin UI URL, login, and what you'll actually see.
+- **How to look inside** — the admin UI path and what you'll see.
 
-Assuming you ran `docker compose up -d` locally, all UIs are on `localhost`.
-When Docket is deployed by the Internal Developer Portal, the same UIs are
-reachable at `<BASE_URL>:<port>` — the exact host depends on the environment.
+Every UI is served under the tenant's `<BASE_URL>` — the Portal exposes them
+on paths listed below. Credentials for each UI are provisioned by the Portal
+and injected into the tenant's namespace; ask your platform team for the
+values, don't hardcode them anywhere.
 
 ### 🚪 UI quick reference
 
-| Service | UI | URL | Login |
-|---|---|---|---|
-| Docket API | Swagger UI | http://localhost:8080/swagger | API key `dev-secret-change-me` (pre-filled) |
-| Postgres | Adminer | http://localhost:8081 | System `PostgreSQL`, server `postgres`, user/pass/DB `docket` |
-| MongoDB | Mongo Express | http://localhost:8082 | `admin` / `admin` |
-| NATS | NUI | http://localhost:8083 | none — add connection `nats://nats:4222` once |
-| Redis | Redis Commander | http://localhost:8084 | none |
-| MinIO | MinIO Console | http://localhost:9001 | `minioadmin` / `minioadmin` |
-| Jaeger | Jaeger UI | http://localhost:16686 | none — pick service `docket` |
+| Service | UI | Path |
+|---|---|---|
+| Docket API | Swagger UI | `<BASE_URL>/swagger` |
+| Postgres | Adminer | `<BASE_URL>/adminer` |
+| MongoDB | Mongo Express | `<BASE_URL>/mongo-express` |
+| NATS | NUI | `<BASE_URL>/nui` |
+| Redis | Redis Commander | `<BASE_URL>/redis-commander` |
+| MinIO | MinIO Console | `<BASE_URL>/minio` |
+| Jaeger | Jaeger UI | `<BASE_URL>/jaeger` |
 
 ### 🎬 See one upload land in every UI
 
 ```bash
-# Trigger one upload
-curl -X POST -H "X-API-Key: dev-secret-change-me" \
+curl -X POST -H "X-API-Key: <your key>" \
   -F "file=@/etc/hosts" -F "owner=demo" -F "tags=readme,demo" \
-  http://localhost:8080/files
+  <BASE_URL>/files
 ```
 
 Then, in order, visit each UI:
 
 | # | UI | Look for |
 |---|---|---|
-| 1 | **Adminer** (8081) | New row in `file_records` — action `upload`, owner `demo`. |
-| 2 | **Mongo Express** (8082) | New document in `docket.files` — with your filename, tags, timestamp. |
-| 3 | **NUI** (8083) | New message on stream `DOCKET_EVENTS`, subject `docket.files.uploaded`. |
-| 4 | **Redis Commander** (8084) | Nothing yet — the counter appears after your first `GET /files/{id}`. |
-| 5 | **MinIO Console** (9001) | New object in bucket `docket`, name = the file's UUID. |
-| 6 | **Jaeger** (16686) | New trace under service `docket` with 6-8 spans (the flame graph). |
+| 1 | **Adminer** | New row in `file_records` — action `upload`, owner `demo`. |
+| 2 | **Mongo Express** | New document in `docket.files` — with your filename, tags, timestamp. |
+| 3 | **NUI** | New message on stream `DOCKET_EVENTS`, subject `docket.files.uploaded`. |
+| 4 | **Redis Commander** | Nothing yet — the counter appears after your first `GET /files/{id}`. |
+| 5 | **MinIO Console** | New object in bucket `docket`, name = the file's UUID. |
+| 6 | **Jaeger** | New trace under service `docket` with 6-8 spans (the flame graph). |
 
 ---
 
@@ -261,14 +126,9 @@ queries like "give me every audit row for user X in the last hour."
 row into `file_records` — a permanent, queryable record of *who* did *what*
 to *which* file and *when*.
 
-**How to look inside — Adminer at http://localhost:8081**
-
-Login form on first visit:
-- **System**: `PostgreSQL`
-- **Server**: `postgres`
-- **Username**: `docket`
-- **Password**: `docket`
-- **Database**: `docket`
+**How to look inside — Adminer at `<BASE_URL>/adminer`.** The connection
+details (server, database, user) live in the Postgres Secret provisioned by
+the Portal.
 
 **What you'll see.**
 - One table: **`file_records`**. Columns: `id` (audit row ID), `file_id`
@@ -291,11 +151,7 @@ shape. Use it when your schema is open-ended and evolves over time.
 **How Docket uses it.** For **file metadata**. Every upload inserts a
 document into the `files` collection under the `docket` database.
 
-**How to look inside — Mongo Express at http://localhost:8082**
-
-Browser will prompt for basic auth:
-- **Username**: `admin`
-- **Password**: `admin`
+**How to look inside — Mongo Express at `<BASE_URL>/mongo-express`.**
 
 **What you'll see.**
 - Database dropdown → pick **`docket`**.
@@ -319,15 +175,9 @@ production, other services (thumbnailer, virus-scanner, search indexer)
 would consume these events and do downstream work without blocking the
 upload response.
 
-**How to look inside — NUI at http://localhost:8083**
-
-NUI ships without a preconfigured connection. First time only:
-
-1. Click **Add Connection** (top-left).
-2. **Name**: anything (`docket-nats` is fine).
-3. **Hosts**: `nats://nats:4222` (that's the container's DNS name inside
-   the compose network — NUI runs in the same network so this resolves).
-4. Save, then click the connection.
+**How to look inside — NUI at `<BASE_URL>/nui`.** First time only, add a
+connection pointing at the in-cluster NATS service (name provided by the
+Portal), then click it.
 
 **What you'll see.**
 - **Streams** tab → **`DOCKET_EVENTS`**. The stream that captures every
@@ -353,9 +203,7 @@ Use it when speed matters more than durability.
 **How Docket uses it.** For **view counters**. Every `GET /files/{id}`
 increments the key `docket:views:<file-id>`.
 
-**How to look inside — Redis Commander at http://localhost:8084**
-
-No login.
+**How to look inside — Redis Commander at `<BASE_URL>/redis-commander`.**
 
 **What you'll see.**
 - Left sidebar → connection **`local`** → **`db0`**.
@@ -376,11 +224,7 @@ serves them via HTTP. Use it for any blob larger than ~1 KB.
 file lives in Mongo/Postgres; the *bytes* live in MinIO under a bucket
 called `docket`, keyed by the file's UUID.
 
-**How to look inside — MinIO Console at http://localhost:9001**
-
-Login:
-- **Username**: `minioadmin`
-- **Password**: `minioadmin`
+**How to look inside — MinIO Console at `<BASE_URL>/minio`.**
 
 **What you'll see.**
 - Left sidebar → **Object Browser** → bucket **`docket`**.
@@ -402,9 +246,7 @@ was slow, not just that the request was slow.
 `docket.http` span and child spans for each backend call
 (`minio.PutObject`, `files.insert`, `query INSERT`, `nats.Publish`, etc).
 
-**How to look inside — Jaeger UI at http://localhost:16686**
-
-No login.
+**How to look inside — Jaeger UI at `<BASE_URL>/jaeger`.**
 
 **What you'll see.**
 - **Service** dropdown (top left) → pick **`docket`**.
@@ -422,70 +264,70 @@ See [How tracing works](#how-tracing-works) below for the concepts.
 ## Environment variables — every key the app reads
 
 Every key below is read via `os.Getenv` in
-[internal/config/config.go](internal/config/config.go). Copy `.env.example`
-to `.env` and edit. In Kubernetes, these come from the
+[internal/config/config.go](internal/config/config.go). In Kubernetes, the
+Portal injects these from the tenant's
 [`docket-config` ConfigMap](k8s/10-docket-config.yaml) (non-secret) and
 [`docket-secrets` Secret](k8s/10-docket-config.yaml) (secret).
 
 ### Application
 
-| Key                | Default        | Purpose                                                       |
-|--------------------|----------------|---------------------------------------------------------------|
-| `DOCKET_PORT`     | `8080`         | HTTP listen port.                                             |
-| `DOCKET_API_KEY`  | *(empty)*      | API key for write endpoints. **Empty disables auth** (with a startup WARN). |
-| `LOG_LEVEL`        | `info`         | `debug` / `info` / `warn` / `error`.                          |
+| Key                | Purpose                                                                     |
+|--------------------|-----------------------------------------------------------------------------|
+| `DOCKET_PORT`      | HTTP listen port.                                                           |
+| `DOCKET_API_KEY`   | API key for write endpoints. **Empty disables auth** (with a startup WARN). |
+| `LOG_LEVEL`        | `debug` / `info` / `warn` / `error`.                                        |
 
 ### Postgres (audit records)
 
-| Key                  | Default     | Purpose                          |
-|----------------------|-------------|----------------------------------|
-| `POSTGRES_HOST`      | `localhost` | Postgres hostname.               |
-| `POSTGRES_PORT`      | `5432`      | Postgres port.                   |
-| `POSTGRES_USER`      | `docket`   | DB user.                         |
-| `POSTGRES_PASSWORD`  | `docket`   | DB password.                     |
-| `POSTGRES_DB`        | `docket`   | DB name.                         |
-| `POSTGRES_SSLMODE`   | `disable`   | `disable` / `require` / `verify-full`. |
+| Key                  | Purpose                          |
+|----------------------|----------------------------------|
+| `POSTGRES_HOST`      | Postgres hostname.               |
+| `POSTGRES_PORT`      | Postgres port.                   |
+| `POSTGRES_USER`      | DB user (Portal-provisioned).    |
+| `POSTGRES_PASSWORD`  | DB password (Portal-provisioned).|
+| `POSTGRES_DB`        | DB name.                         |
+| `POSTGRES_SSLMODE`   | `disable` / `require` / `verify-full`. |
 
 ### MongoDB (file metadata)
 
-| Key         | Default                       | Purpose                |
-|-------------|-------------------------------|------------------------|
-| `MONGO_URI` | `mongodb://localhost:27017`   | Connection URI.        |
-| `MONGO_DB`  | `docket`                     | Database name.         |
+| Key         | Purpose                |
+|-------------|------------------------|
+| `MONGO_URI` | Connection URI.        |
+| `MONGO_DB`  | Database name.         |
 
 ### NATS JetStream (upload events)
 
-| Key                     | Default                    | Purpose                                          |
-|-------------------------|----------------------------|--------------------------------------------------|
-| `NATS_URL`              | `nats://localhost:4222`    | Connection URL.                                  |
-| `NATS_STREAM`           | `DOCKET_EVENTS`            | JetStream name (auto-created on startup).        |
-| `NATS_SUBJECT_PREFIX`   | `docket.files`             | Events publish to `<prefix>.uploaded` / `.deleted`. |
+| Key                    | Purpose                                              |
+|------------------------|------------------------------------------------------|
+| `NATS_URL`             | Connection URL.                                      |
+| `NATS_STREAM`          | JetStream name (auto-created on startup).            |
+| `NATS_SUBJECT_PREFIX`  | Events publish to `<prefix>.uploaded` / `.deleted`.  |
 
 ### Redis (view counters)
 
-| Key              | Default          | Purpose             |
-|------------------|------------------|---------------------|
-| `REDIS_ADDR`     | `localhost:6379` | `host:port`.        |
-| `REDIS_PASSWORD` | *(empty)*        | Optional password.  |
-| `REDIS_DB`       | `0`              | Redis DB index.     |
+| Key              | Purpose             |
+|------------------|---------------------|
+| `REDIS_ADDR`     | `host:port`.        |
+| `REDIS_PASSWORD` | Optional password.  |
+| `REDIS_DB`       | Redis DB index.     |
 
 ### MinIO / S3 (file bytes)
 
-| Key                | Default          | Purpose                              |
-|--------------------|------------------|--------------------------------------|
-| `MINIO_ENDPOINT`   | `localhost:9000` | S3 endpoint (no scheme).             |
-| `MINIO_ACCESS_KEY` | `minioadmin`     | Access key.                          |
-| `MINIO_SECRET_KEY` | `minioadmin`     | Secret key.                          |
-| `MINIO_BUCKET`     | `docket`        | Auto-created on startup if missing.  |
-| `MINIO_USE_SSL`    | `false`          | `true` to talk to HTTPS S3.          |
+| Key                | Purpose                              |
+|--------------------|--------------------------------------|
+| `MINIO_ENDPOINT`   | S3 endpoint (no scheme).             |
+| `MINIO_ACCESS_KEY` | Access key (Portal-provisioned).     |
+| `MINIO_SECRET_KEY` | Secret key (Portal-provisioned).     |
+| `MINIO_BUCKET`     | Auto-created on startup if missing.  |
+| `MINIO_USE_SSL`    | `true` to talk to HTTPS S3.          |
 
 ### OpenTelemetry (tracing)
 
-| Key                            | Default             | Purpose                                                  |
-|--------------------------------|---------------------|----------------------------------------------------------|
-| `OTEL_EXPORTER_OTLP_ENDPOINT`  | *(empty = disabled)*| OTLP HTTP endpoint, e.g. `http://jaeger:4318`. Empty disables tracing. |
-| `OTEL_SERVICE_NAME`            | `docket`           | Service name shown in Jaeger.                            |
-| `OTEL_TRACES_SAMPLER`          | `always_on`         | `always_on` or `always_off`.                             |
+| Key                            | Purpose                                                  |
+|--------------------------------|----------------------------------------------------------|
+| `OTEL_EXPORTER_OTLP_ENDPOINT`  | OTLP HTTP endpoint. Empty disables tracing.              |
+| `OTEL_SERVICE_NAME`            | Service name shown in Jaeger.                            |
+| `OTEL_TRACES_SAMPLER`          | `always_on` or `always_off`.                             |
 
 ---
 
@@ -493,7 +335,7 @@ to `.env` and edit. In Kubernetes, these come from the
 
 Every backend adapter exposes an interface, with **two** implementations: the
 real one (e.g. `MinIO`) and an in-memory one (a Go map). At startup each
-adapter tries to connect with three retries; on final failure it logs a loud
+adapter probes its backend with a short timeout; on failure it logs a loud
 `WARN` and returns the memory implementation instead.
 
 ```
@@ -503,8 +345,8 @@ WARN minio unreachable, falling back to in-memory storage;
 
 Practical effects:
 
-- `docker compose up docket` (no backends) still boots — useful for local
-  iteration.
+- The app **still boots** when a backend is unreachable — useful for degraded
+  operation and for developer iteration.
 - `GET /healthz` shows per-backend mode so you can spot misconfiguration:
   ```json
   {
@@ -526,7 +368,7 @@ Practical effects:
 
 ## API endpoints
 
-Live OpenAPI spec at `/openapi.json`, Swagger UI at `/swagger`.
+Live OpenAPI spec at `<BASE_URL>/openapi.json`, Swagger UI at `<BASE_URL>/swagger`.
 
 | Method | Path                       | Auth | Description                                     |
 |--------|----------------------------|------|-------------------------------------------------|
@@ -562,9 +404,9 @@ What happens in Docket:
 4. Then `Records.Insert` → Postgres. Another span.
 5. Then `Events.Publish` → NATS JetStream. Another span.
 6. The full tree is batched and sent to **Jaeger** at the URL in
-   `OTEL_EXPORTER_OTLP_ENDPOINT` using the OTLP/HTTP protocol on port `4318`.
-7. Open `http://localhost:16686`, pick service `docket`, and you'll see a
-   flame-graph showing exactly which backend was slow.
+   `OTEL_EXPORTER_OTLP_ENDPOINT` using the OTLP/HTTP protocol.
+7. Open Jaeger under `<BASE_URL>/jaeger`, pick service `docket`, and you'll
+   see a flame-graph showing exactly which backend was slow.
 
 If `OTEL_EXPORTER_OTLP_ENDPOINT` is empty or the endpoint is unreachable,
 tracing is silently disabled — the app keeps running. Observability must
@@ -577,7 +419,7 @@ just change the endpoint. **No app code changes.**
 
 ## Metrics and logs
 
-**Metrics** — Prometheus scrape at `/metrics`. Custom counters:
+**Metrics** — Prometheus scrape at `<BASE_URL>/metrics`. Custom counters:
 
 - `docket_http_requests_total{route,method,status}` — HTTP traffic.
 - `docket_http_request_duration_seconds{route,method}` — latency histogram.
@@ -630,9 +472,6 @@ See [`internal/api/middleware.go`](internal/api/middleware.go).
 │   └── storage/               — MinIO interface + minio.go + memory.go
 ├── migrations/                — SQL schema (also auto-applied at startup)
 ├── k8s/                       — Manifests for namespace, app, all backends
-├── Dockerfile                 — distroless static multi-stage build
-├── docker-compose.yml         — local dev: app + all 6 backends
-├── Makefile                   — build / run / up / down / k8s-apply
 └── .env.example               — every env var the app reads
 ```
 
@@ -650,7 +489,7 @@ What to keep:
   [`internal/metrics`](internal/metrics/), [`internal/otel`](internal/otel/),
   and [`internal/api/middleware.go`](internal/api/middleware.go).
 - The adapter pattern in `internal/{storage,metadata,records,events,cache}`.
-- The Dockerfile and `k8s/` manifests.
+- The `k8s/` manifests.
 
 What to replace:
 - The `Meta` / `Record` / `Event` types — model your own domain.
@@ -658,12 +497,6 @@ What to replace:
   business logic.
 - The OpenAPI spec in [`internal/api/openapi.go`](internal/api/openapi.go).
 - The module path `github.com/example/docket` → your real org path.
-
-One-line rebrand:
-
-```bash
-grep -rl "github.com/example/docket" . | xargs sed -i '' 's|github.com/example/docket|github.com/YOUR-ORG/YOUR-APP|g'
-```
 
 That's it — you now have a service that connects to every piece of platform
 infrastructure with sensible defaults, graceful degradation, and traces from
