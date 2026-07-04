@@ -33,8 +33,8 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger) *App {
 	a := &App{Log: log, Cfg: cfg}
 	var wg sync.WaitGroup
 	wg.Add(5)
-	go func() { defer wg.Done(); a.Storage = storage.New(ctx, cfg.MinIO, log) }()
-	go func() { defer wg.Done(); a.Metadata = metadata.New(ctx, cfg.Mongo, log) }()
+	go func() { defer wg.Done(); a.Storage = storage.New(ctx, cfg.S3, log) }()
+	go func() { defer wg.Done(); a.Metadata = metadata.New(ctx, cfg.Postgres, log) }()
 	go func() { defer wg.Done(); a.Records = records.New(ctx, cfg.Postgres, log) }()
 	go func() { defer wg.Done(); a.Events = events.New(ctx, cfg.NATS, log) }()
 	go func() { defer wg.Done(); a.Cache = cache.New(ctx, cfg.Redis, log) }()

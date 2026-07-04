@@ -1,7 +1,8 @@
 // Package storage is the object-storage layer (file bytes go here).
-// In production it talks to MinIO (S3-compatible). When MinIO is unreachable
-// at startup, an in-memory implementation is returned instead so the app
-// still boots — useful for local dev with zero dependencies.
+// In this template it talks to SeaweedFS via the S3 API; production forks
+// swap in AWS S3 or another S3-compatible endpoint by changing the config.
+// When the endpoint is unreachable at startup, an in-memory implementation
+// is returned instead so the app still boots.
 package storage
 
 import (
@@ -20,11 +21,11 @@ type Storage interface {
 	Close(ctx context.Context) error
 }
 
-func New(ctx context.Context, cfg config.MinIOConfig, log *slog.Logger) Storage {
-	s, err := newMinIO(ctx, cfg, log)
+func New(ctx context.Context, cfg config.S3Config, log *slog.Logger) Storage {
+	s, err := newS3(ctx, cfg, log)
 	if err == nil {
 		return s
 	}
-	log.Warn("minio unreachable, falling back to in-memory storage; uploaded files will NOT survive restart", "err", err)
+	log.Warn("s3 unreachable, falling back to in-memory storage; uploaded files will NOT survive restart", "err", err)
 	return newMemoryStorage()
 }

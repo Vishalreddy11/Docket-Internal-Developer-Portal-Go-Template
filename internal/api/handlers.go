@@ -171,7 +171,7 @@ func (h *handlers) DownloadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer body.Close()
 
-	// Best-effort: look up the original filename from Mongo so the browser
+	// Best-effort: look up the original filename from metadata so the browser
 	// saves the file under its real name. Falls back to the UUID.
 	filename := id
 	if meta, err := h.app.Metadata.Get(r.Context(), id); err == nil && meta.FileName != "" {

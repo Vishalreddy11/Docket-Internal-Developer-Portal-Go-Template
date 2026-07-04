@@ -4,10 +4,9 @@ services:
     container_name: docket
     depends_on:
       - postgres
-      - mongo
       - nats
       - redis
-      - minio
+      - s3
       - jaeger
     environment:
       DOCKET_PORT: "8080"
@@ -19,18 +18,16 @@ services:
       POSTGRES_PASSWORD: docket
       POSTGRES_DB: docket
       POSTGRES_SSLMODE: disable
-      MONGO_URI: mongodb://mongo:27017
-      MONGO_DB: docket
       NATS_URL: nats://nats:4222
       NATS_STREAM: DOCKET_EVENTS
       NATS_SUBJECT_PREFIX: docket.files
       REDIS_ADDR: redis:6379
       REDIS_DB: "0"
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      MINIO_BUCKET: docket
-      MINIO_USE_SSL: "false"
+      S3_ENDPOINT: s3:9000
+      S3_ACCESS_KEY: docketaccesskey
+      S3_SECRET_KEY: docketsecretkey
+      S3_BUCKET: docket
+      S3_USE_SSL: "false"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
       OTEL_SERVICE_NAME: docket
     ports:
@@ -48,16 +45,8 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
-  mongo:
-    image: mongo:7
-    container_name: docket-mongo
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongodata:/data/db
-
   nats:
-    image: nats:2-alpine
+    image: nats:2.14-alpine
     container_name: docket-nats
     # -js enables JetStream (persistent streams, replay, at-least-once)
     # -m 8222 exposes the monitoring HTTP endpoint (used by NUI)
@@ -68,27 +57,30 @@ services:
     volumes:
       - natsdata:/data
 
+  # Valkey — Redis-protocol-compatible fork under the Linux Foundation.
+  # BSD 3-Clause. Service name kept as "redis" so REDIS_ADDR stays unchanged.
   redis:
-    image: redis:7-alpine
+    image: valkey/valkey:9.1-alpine
     container_name: docket-redis
     ports:
       - "6379:6379"
 
-  minio:
-    image: minio/minio:latest
-    container_name: docket-minio
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+  # SeaweedFS — S3-API-compatible object store (Apache 2.0).
+  # Service name "s3" keeps the code vendor-neutral: swap SeaweedFS for AWS S3,
+  # Ceph RGW, or another S3-compatible endpoint just by changing S3_ENDPOINT.
+  # For prod: add -s3.config=/etc/seaweedfs/s3.json to enforce identities;
+  # without it SeaweedFS accepts requests without validating the AWS v4 signature.
+  s3:
+    image: chrislusf/seaweedfs:4.22
+    container_name: docket-s3
+    command: server -s3 -s3.port=9000 -dir=/data
     ports:
       - "9000:9000"   # S3 API
-      - "9001:9001"   # web console
     volumes:
-      - miniodata:/data
+      - s3data:/data
 
   jaeger:
-    image: jaegertracing/all-in-one:latest
+    image: jaegertracing/all-in-one:1.62
     container_name: docket-jaeger
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
@@ -100,7 +92,7 @@ services:
   # ===== Admin UIs (browse data in each backend) =====
 
   adminer:
-    image: adminer:latest
+    image: adminer:5
     container_name: docket-adminer
     depends_on: [postgres]
     environment:
@@ -108,20 +100,8 @@ services:
     ports:
       - "8081:8080"
 
-  mongo-express:
-    image: mongo-express:latest
-    container_name: docket-mongo-express
-    depends_on: [mongo]
-    environment:
-      ME_CONFIG_MONGODB_SERVER: mongo
-      ME_CONFIG_MONGODB_PORT: "27017"
-      ME_CONFIG_BASICAUTH_USERNAME: admin
-      ME_CONFIG_BASICAUTH_PASSWORD: admin
-    ports:
-      - "8082:8081"
-
   nui:
-    image: ghcr.io/nats-nui/nui:latest
+    image: ghcr.io/nats-nui/nui:0.9
     container_name: docket-nui
     depends_on: [nats]
     ports:
@@ -129,18 +109,19 @@ services:
     volumes:
       - nuidata:/db
 
-  redis-commander:
-    image: rediscommander/redis-commander:latest
-    container_name: docket-redis-commander
+  # P3X Redis UI — MIT-licensed, actively maintained. Works with Valkey.
+  p3x-redis-ui:
+    image: patrikx3/p3x-redis-ui:2024.10.128
+    container_name: docket-p3x-redis-ui
     depends_on: [redis]
-    environment:
-      REDIS_HOSTS: local:redis:6379
     ports:
-      - "8084:8081"
+      - "8084:7843"
+    volumes:
+      - p3xdata:/settings
 
 volumes:
   pgdata:
-  mongodata:
   natsdata:
-  miniodata:
+  s3data:
   nuidata:
+  p3xdata:

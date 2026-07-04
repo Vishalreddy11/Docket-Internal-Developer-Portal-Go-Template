@@ -11,10 +11,9 @@ import (
 type Config struct {
 	App      AppConfig
 	Postgres PostgresConfig
-	Mongo    MongoConfig
 	NATS     NATSConfig
 	Redis    RedisConfig
-	MinIO    MinIOConfig
+	S3       S3Config
 	OTel     OTelConfig
 }
 
@@ -37,11 +36,6 @@ func (p PostgresConfig) DSN() string {
 	return "postgres://" + p.User + ":" + p.Password + "@" + p.Host + ":" + p.Port + "/" + p.DB + "?sslmode=" + p.SSLMode
 }
 
-type MongoConfig struct {
-	URI string
-	DB  string
-}
-
 type NATSConfig struct {
 	URL           string
 	Stream        string
@@ -54,7 +48,11 @@ type RedisConfig struct {
 	DB       int
 }
 
-type MinIOConfig struct {
+// S3Config is the config for any S3-compatible object store.
+// In this template it points at SeaweedFS; production forks typically point
+// at AWS S3 or a Ceph RGW endpoint. The Go code uses the MinIO Go SDK, which
+// is a generic S3 client.
+type S3Config struct {
 	Endpoint  string
 	AccessKey string
 	SecretKey string
@@ -83,10 +81,6 @@ func Load() Config {
 			DB:       env("POSTGRES_DB", "docket"),
 			SSLMode:  env("POSTGRES_SSLMODE", "disable"),
 		},
-		Mongo: MongoConfig{
-			URI: env("MONGO_URI", "mongodb://localhost:27017"),
-			DB:  env("MONGO_DB", "docket"),
-		},
 		NATS: NATSConfig{
 			URL:           env("NATS_URL", "nats://localhost:4222"),
 			Stream:        env("NATS_STREAM", "DOCKET_EVENTS"),
@@ -97,12 +91,12 @@ func Load() Config {
 			Password: env("REDIS_PASSWORD", ""),
 			DB:       atoi(env("REDIS_DB", "0")),
 		},
-		MinIO: MinIOConfig{
-			Endpoint:  env("MINIO_ENDPOINT", "localhost:9000"),
-			AccessKey: env("MINIO_ACCESS_KEY", "minioadmin"),
-			SecretKey: env("MINIO_SECRET_KEY", "minioadmin"),
-			Bucket:    env("MINIO_BUCKET", "docket"),
-			UseSSL:    env("MINIO_USE_SSL", "false") == "true",
+		S3: S3Config{
+			Endpoint:  env("S3_ENDPOINT", "localhost:9000"),
+			AccessKey: env("S3_ACCESS_KEY", "docketaccesskey"),
+			SecretKey: env("S3_SECRET_KEY", "docketsecretkey"),
+			Bucket:    env("S3_BUCKET", "docket"),
+			UseSSL:    env("S3_USE_SSL", "false") == "true",
 		},
 		OTel: OTelConfig{
 			Endpoint:    env("OTEL_EXPORTER_OTLP_ENDPOINT", ""),

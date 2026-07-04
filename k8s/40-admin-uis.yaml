@@ -1,15 +1,14 @@
 # ============================================================================
-# Browser-based admin UIs for the four backends that don't ship their own.
+# Browser-based admin UIs for the three backends that don't ship their own.
 #
-# All four are stateless — no PVCs. Each is exposed on a NodePort so a
-# developer can visit http://<any-node-ip>:<port> and log in.
+# All three are stateless (P3X keeps a small settings volume). Each is
+# exposed on a NodePort so a developer can visit http://<any-node-ip>:<port>.
 #
 #   Service          NodePort   Login
 #   ─────────────────────────────────────────────────────────
 #   Adminer          30081      Postgres creds: user/pass/DB = docket
-#   Mongo Express    30082      admin / admin  (basic-auth)
 #   NUI              30083      add connection nats://nats:4222 once
-#   Redis Commander  30084      none
+#   P3X Redis UI     30084      add connection redis:6379 once
 # ============================================================================
 
 # ---- Adminer (Postgres) ----------------------------------------------------
@@ -44,7 +43,7 @@ spec:
     spec:
       containers:
         - name: adminer
-          image: adminer:latest
+          image: adminer:5
           ports:
             - containerPort: 8080
           env:
@@ -57,55 +56,6 @@ spec:
           resources:
             requests: { cpu: "20m",  memory: "64Mi"  }
             limits:   { cpu: "100m", memory: "128Mi" }
-
-# ---- Mongo Express ---------------------------------------------------------
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: mongo-express
-  namespace: docket
-spec:
-  type: NodePort
-  selector:
-    app: mongo-express
-  ports:
-    - port: 8081
-      targetPort: 8081
-      nodePort: 30082
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: mongo-express
-  namespace: docket
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: mongo-express
-  template:
-    metadata:
-      labels:
-        app: mongo-express
-    spec:
-      containers:
-        - name: mongo-express
-          image: mongo-express:latest
-          ports:
-            - containerPort: 8081
-          env:
-            - { name: ME_CONFIG_MONGODB_SERVER, value: "mongo" }
-            - { name: ME_CONFIG_MONGODB_PORT,   value: "27017" }
-            - { name: ME_CONFIG_BASICAUTH_USERNAME, value: "admin" }
-            - { name: ME_CONFIG_BASICAUTH_PASSWORD, value: "admin" }
-          readinessProbe:
-            tcpSocket: { port: 8081 }
-            initialDelaySeconds: 10
-            periodSeconds: 10
-          resources:
-            requests: { cpu: "20m",  memory: "128Mi" }
-            limits:   { cpu: "100m", memory: "256Mi" }
 
 # ---- NUI (NATS admin console) ----------------------------------------------
 ---
@@ -140,7 +90,7 @@ spec:
     spec:
       containers:
         - name: nui
-          image: ghcr.io/nats-nui/nui:latest
+          image: ghcr.io/nats-nui/nui:0.9
           ports:
             - containerPort: 31311
           readinessProbe:
@@ -151,47 +101,44 @@ spec:
             requests: { cpu: "20m",  memory: "64Mi"  }
             limits:   { cpu: "100m", memory: "128Mi" }
 
-# ---- Redis Commander -------------------------------------------------------
+# ---- P3X Redis UI (Valkey) -------------------------------------------------
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: redis-commander
+  name: p3x-redis-ui
   namespace: docket
 spec:
   type: NodePort
   selector:
-    app: redis-commander
+    app: p3x-redis-ui
   ports:
-    - port: 8081
-      targetPort: 8081
+    - port: 7843
+      targetPort: 7843
       nodePort: 30084
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: redis-commander
+  name: p3x-redis-ui
   namespace: docket
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: redis-commander
+      app: p3x-redis-ui
   template:
     metadata:
       labels:
-        app: redis-commander
+        app: p3x-redis-ui
     spec:
       containers:
-        - name: redis-commander
-          image: rediscommander/redis-commander:latest
+        - name: p3x-redis-ui
+          image: patrikx3/p3x-redis-ui:2024.10.128
           ports:
-            - containerPort: 8081
-          env:
-            - name: REDIS_HOSTS
-              value: local:redis:6379
+            - containerPort: 7843
           readinessProbe:
-            tcpSocket: { port: 8081 }
+            tcpSocket: { port: 7843 }
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:

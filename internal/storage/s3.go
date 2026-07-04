@@ -14,14 +14,18 @@ import (
 	"go.opentelemetry.io/otel/codes"
 )
 
-var tracer = otel.Tracer("docket/storage/minio")
+// The MinIO Go SDK is a generic S3 client library — it works against any
+// S3-compatible endpoint (SeaweedFS in this template, AWS S3 / Ceph RGW /
+// artifactory-S3 in production forks). The "minio" in the import path is
+// the library's name, not a MinIO server dependency.
+var tracer = otel.Tracer("docket/storage/s3")
 
-type minioStorage struct {
+type s3Storage struct {
 	client *minio.Client
 	bucket string
 }
 
-func newMinIO(ctx context.Context, cfg config.MinIOConfig, log *slog.Logger) (*minioStorage, error) {
+func newS3(ctx context.Context, cfg config.S3Config, log *slog.Logger) (*s3Storage, error) {
 	c, err := minio.New(cfg.Endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
 		Secure: cfg.UseSSL,
@@ -40,20 +44,20 @@ func newMinIO(ctx context.Context, cfg config.MinIOConfig, log *slog.Logger) (*m
 		if err := c.MakeBucket(ctx, cfg.Bucket, minio.MakeBucketOptions{}); err != nil {
 			return nil, err
 		}
-		log.Info("minio bucket created", "bucket", cfg.Bucket)
+		log.Info("s3 bucket created", "bucket", cfg.Bucket)
 	}
-	log.Info("minio storage connected", "endpoint", cfg.Endpoint, "bucket", cfg.Bucket)
-	return &minioStorage{client: c, bucket: cfg.Bucket}, nil
+	log.Info("s3 storage connected", "endpoint", cfg.Endpoint, "bucket", cfg.Bucket)
+	return &s3Storage{client: c, bucket: cfg.Bucket}, nil
 }
 
-func (m *minioStorage) Put(ctx context.Context, id string, r io.Reader, size int64, ct string) error {
-	ctx, span := tracer.Start(ctx, "minio.PutObject")
+func (m *s3Storage) Put(ctx context.Context, id string, r io.Reader, size int64, ct string) error {
+	ctx, span := tracer.Start(ctx, "s3.PutObject")
 	defer span.End()
 	span.SetAttributes(
-		attribute.String("minio.bucket", m.bucket),
-		attribute.String("minio.object", id),
-		attribute.Int64("minio.size", size),
-		attribute.String("minio.content_type", ct),
+		attribute.String("s3.bucket", m.bucket),
+		attribute.String("s3.object", id),
+		attribute.Int64("s3.size", size),
+		attribute.String("s3.content_type", ct),
 	)
 	_, err := m.client.PutObject(ctx, m.bucket, id, r, size, minio.PutObjectOptions{ContentType: ct})
 	if err != nil {
@@ -62,12 +66,12 @@ func (m *minioStorage) Put(ctx context.Context, id string, r io.Reader, size int
 	return err
 }
 
-func (m *minioStorage) Get(ctx context.Context, id string) (io.ReadCloser, int64, string, error) {
-	ctx, span := tracer.Start(ctx, "minio.GetObject")
+func (m *s3Storage) Get(ctx context.Context, id string) (io.ReadCloser, int64, string, error) {
+	ctx, span := tracer.Start(ctx, "s3.GetObject")
 	defer span.End()
 	span.SetAttributes(
-		attribute.String("minio.bucket", m.bucket),
-		attribute.String("minio.object", id),
+		attribute.String("s3.bucket", m.bucket),
+		attribute.String("s3.object", id),
 	)
 	obj, err := m.client.GetObject(ctx, m.bucket, id, minio.GetObjectOptions{})
 	if err != nil {
@@ -80,16 +84,16 @@ func (m *minioStorage) Get(ctx context.Context, id string) (io.ReadCloser, int64
 		obj.Close()
 		return nil, 0, "", err
 	}
-	span.SetAttributes(attribute.Int64("minio.size", stat.Size))
+	span.SetAttributes(attribute.Int64("s3.size", stat.Size))
 	return obj, stat.Size, stat.ContentType, nil
 }
 
-func (m *minioStorage) Delete(ctx context.Context, id string) error {
-	ctx, span := tracer.Start(ctx, "minio.RemoveObject")
+func (m *s3Storage) Delete(ctx context.Context, id string) error {
+	ctx, span := tracer.Start(ctx, "s3.RemoveObject")
 	defer span.End()
 	span.SetAttributes(
-		attribute.String("minio.bucket", m.bucket),
-		attribute.String("minio.object", id),
+		attribute.String("s3.bucket", m.bucket),
+		attribute.String("s3.object", id),
 	)
 	err := m.client.RemoveObject(ctx, m.bucket, id, minio.RemoveObjectOptions{})
 	if err != nil {
@@ -98,5 +102,5 @@ func (m *minioStorage) Delete(ctx context.Context, id string) error {
 	return err
 }
 
-func (m *minioStorage) Mode() string                  { return "live" }
-func (m *minioStorage) Close(_ context.Context) error { return nil }
+func (m *s3Storage) Mode() string                  { return "live" }
+func (m *s3Storage) Close(_ context.Context) error { return nil }

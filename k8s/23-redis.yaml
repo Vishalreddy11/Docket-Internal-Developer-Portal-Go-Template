@@ -1,5 +1,7 @@
-# Redis — view-counter cache. Ephemeral (no PVC) for POC — cache doesn't need
-# to survive restart. Add a PVC here if you want counters to persist.
+# Valkey — view-counter cache. Redis-protocol-compatible fork (BSD 3-Clause).
+# Service name kept as "redis" so REDIS_ADDR stays unchanged. Ephemeral
+# (no PVC) for POC — cache doesn't need to survive restart. Add a PVC here
+# if you want counters to persist.
 apiVersion: v1
 kind: Service
 metadata:
@@ -31,12 +33,12 @@ spec:
     spec:
       containers:
         - name: redis
-          image: redis:7-alpine
+          image: valkey/valkey:9.1-alpine
           ports:
             - containerPort: 6379
           readinessProbe:
             exec:
-              command: ["redis-cli", "ping"]
+              command: ["valkey-cli", "ping"]
             initialDelaySeconds: 5
             periodSeconds: 5
           resources:

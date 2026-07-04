@@ -12,7 +12,7 @@ import (
 )
 
 // LoadTest fans out N concurrent internal "view file" operations and returns
-// per-percentile latency. It exercises Mongo (metadata lookup) + Redis (incr)
+// per-percentile latency. It exercises Postgres (metadata lookup) + Valkey (incr)
 // in tight succession so a developer can watch traces and Prom metrics light
 // up under load.
 func (h *handlers) LoadTest(w http.ResponseWriter, r *http.Request) {

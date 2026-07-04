@@ -1,59 +1,54 @@
-# MinIO — S3-compatible object store for file bytes.
-# StatefulSet with 1Gi PVC (POC — real deployments size this by expected file
-# volume). Two NodePorts:
+# SeaweedFS — S3-API-compatible object store (Apache 2.0).
+# Service name "s3" is used so the code stays vendor-neutral (S3_ENDPOINT
+# points at s3:9000 — swap SeaweedFS for AWS S3 / Ceph RGW / etc. without
+# touching any Go code).
+# -s3.port=9000 keeps the standard S3-API port.
+#
+# NodePort:
 #   30900 → S3 API (for the Go app + any S3-compatible client)
-#   30901 → MinIO web console (browser UI)
+#
+# NOTE: this POC runs SeaweedFS without -s3.config; requests are accepted
+# without validating the AWS v4 signature. For prod, mount an s3.json
+# identity file and add -s3.config=/etc/seaweedfs/s3.json.
 apiVersion: v1
 kind: Service
 metadata:
-  name: minio
+  name: s3
   namespace: docket
 spec:
   type: NodePort
   selector:
-    app: minio
+    app: s3
   ports:
     - name: s3
       port: 9000
       targetPort: 9000
       nodePort: 30900
-    - name: console
-      port: 9001
-      targetPort: 9001
-      nodePort: 30901
 ---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: minio
+  name: s3
   namespace: docket
 spec:
-  serviceName: minio
+  serviceName: s3
   replicas: 1
   selector:
     matchLabels:
-      app: minio
+      app: s3
   template:
     metadata:
       labels:
-        app: minio
+        app: s3
     spec:
       containers:
-        - name: minio
-          image: minio/minio:latest
-          args: ["server", "/data", "--console-address", ":9001"]
+        - name: seaweedfs
+          image: chrislusf/seaweedfs:4.22
+          args: ["server", "-s3", "-s3.port=9000", "-dir=/data"]
           ports:
             - containerPort: 9000
-            - containerPort: 9001
-          env:
-            - name: MINIO_ROOT_USER
-              valueFrom: { secretKeyRef: { name: docket-secrets, key: MINIO_ACCESS_KEY } }
-            - name: MINIO_ROOT_PASSWORD
-              valueFrom: { secretKeyRef: { name: docket-secrets, key: MINIO_SECRET_KEY } }
           readinessProbe:
-            httpGet:
-              path: /minio/health/ready
-              port: 9000
+            tcpSocket: { port: 9000 }
             initialDelaySeconds: 10
             periodSeconds: 10
           resources:

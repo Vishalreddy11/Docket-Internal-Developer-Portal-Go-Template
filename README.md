@@ -1,13 +1,29 @@
 # Docket — Internal Developer Portal Go Template
 
 A working photo/document sharing service that demonstrates how an enterprise
-Go application talks to **Postgres, MongoDB, NATS, Redis, MinIO (S3)**, and
-emits **OpenTelemetry traces** to Jaeger — all running as containers in a
+Go application talks to **Postgres, Valkey, NATS JetStream, SeaweedFS (S3)**,
+and emits **OpenTelemetry traces** to Jaeger — all running as containers in a
 single namespace.
 
-This repository is a **template**. Developers fork it, replace the file-sharing
-business logic with their own, and ship. The wiring (config, adapters,
-graceful fallback, observability, auth, Kubernetes manifests) stays the same.
+All backing services are permissive open source (Apache 2.0 / BSD / MIT /
+PostgreSQL License) — no AGPL, SSPL, or RSAL, no copyright encumbrances.
+Safe to mirror inside an enterprise artifactory without licensing overhead.
+
+| Image | License |
+|---|---|
+| `postgres:16-alpine` | PostgreSQL License |
+| `nats:2.14-alpine` | Apache 2.0 |
+| `valkey/valkey:9.1-alpine` | BSD 3-Clause |
+| `chrislusf/seaweedfs:4.22` | Apache 2.0 |
+| `jaegertracing/all-in-one:1.62` | Apache 2.0 |
+| `adminer:5` | Apache 2.0 / GPL 2 (dual) |
+| `ghcr.io/nats-nui/nui:0.9` | Apache 2.0 |
+| `patrikx3/p3x-redis-ui` | MIT |
+
+This repository is a **template**. Developers fork it, replace the
+file-sharing business logic with their own, and ship. The wiring (config,
+adapters, graceful fallback, observability, auth, Kubernetes manifests)
+stays the same.
 
 ---
 
@@ -15,7 +31,7 @@ graceful fallback, observability, auth, Kubernetes manifests) stays the same.
 
 1. [What this is](#what-this-is)
 2. [Architecture](#architecture)
-3. [The six services, in plain terms](#the-six-services-in-plain-terms)
+3. [The five services, in plain terms](#the-five-services-in-plain-terms)
 4. [Environment variables — every key the app reads](#environment-variables--every-key-the-app-reads)
 5. [In-memory fallback (why the app still boots when a backend is down)](#in-memory-fallback)
 6. [API endpoints](#api-endpoints)
@@ -34,7 +50,7 @@ Docket is a tiny but realistic backend. You can:
 - Upload a file (image, PDF, text — anything).
 - Get back metadata, a view counter, and an audit trail.
 - See `file.uploaded` events flow through NATS JetStream.
-- Watch traces light up in Jaeger as a request hops across all six services.
+- Watch traces light up in Jaeger as a request hops across all five services.
 
 It exists to answer one question: **"how do I wire a Go service to all the
 infrastructure my platform offers?"** Forking Docket gives you that wiring
@@ -42,7 +58,7 @@ for free — you only write the business logic.
 
 ## Architecture
 
-All six dependencies live in the **same Kubernetes namespace** so
+All five dependencies live in the **same Kubernetes namespace** so
 they share a service-DNS prefix and stay isolated from other tenants.
 
 ```
@@ -51,25 +67,28 @@ they share a service-DNS prefix and stay isolated from other tenants.
                               │  (Go binary)     │       Prom ── Prometheus
                               └────────┬─────────┘
                                        │
-                       ┌───────────────┼─────────────────┐
-                       ▼               ▼                 ▼
-                 ┌──────────┐    ┌──────────┐      ┌─────────┐
-                 │ Postgres │    │ MongoDB  │      │  NATS   │
-                 │ (audit)  │    │(metadata)│      │(events) │
-                 └──────────┘    └──────────┘      └─────────┘
-                       ▼               ▼                 ▼
-                 ┌──────────┐    ┌──────────┐      ┌─────────┐
-                 │  Redis   │    │  MinIO   │      │ Jaeger  │
-                 │ (counts) │    │ (bytes)  │      │ (UI)    │
-                 └──────────┘    └──────────┘      └─────────┘
+              ┌──────────────┬─────────┼─────────┬──────────────┐
+              ▼              ▼         ▼         ▼              ▼
+        ┌──────────┐   ┌──────────┐   ┌────┐  ┌────────┐  ┌──────────┐
+        │ Postgres │   │  Valkey  │   │NATS│  │SeaweedFS│  │  Jaeger  │
+        │ records  │   │  cache   │   │bus │  │  bytes  │  │  traces  │
+        │ +metadata│   │(counters)│   │    │  │ (S3 API)│  │          │
+        └──────────┘   └──────────┘   └────┘  └────────┘  └──────────┘
 ```
 
-Deployment is done by Internal Developer Portal - the whole stack (app + backends + admin UIs + resource
-guardrails) applies as a single unit, PLatform manages, all the k8s manifests, CI, CD, routing, capacity, while developer only focuses on building the application.
+Postgres serves two roles — the immutable audit log (`file_records`) and the
+open-ended file metadata (`file_metadata` with a JSONB column plus a GIN
+index for containment queries). Sharing one Postgres instance keeps ops
+surface small while still letting metadata evolve without schema migrations.
+
+Deployment is done by the Internal Developer Portal — the whole stack (app +
+backends + admin UIs + resource guardrails) applies as a single unit. The
+Platform manages all Kubernetes manifests, CI, CD, routing, and capacity;
+the developer only focuses on building the application.
 
 ---
 
-## The six services, in plain terms
+## The five services, in plain terms
 
 For each service below you get:
 - **What it is** — one paragraph, no jargon.
@@ -83,15 +102,14 @@ values, don't hardcode them anywhere.
 
 ### 🚪 UI quick reference
 
-| Service | UI | Path |
-|---|---|---|
-| Docket API | Swagger UI | `<BASE_URL>/swagger` |
-| Postgres | Adminer | `<BASE_URL>/adminer` |
-| MongoDB | Mongo Express | `<BASE_URL>/mongo-express` |
-| NATS | NUI | `<BASE_URL>/nui` |
-| Redis | Redis Commander | `<BASE_URL>/redis-commander` |
-| MinIO | MinIO Console | `<BASE_URL>/minio` |
-| Jaeger | Jaeger UI | `<BASE_URL>/jaeger` |
+| Service | UI | Path | License |
+|---|---|---|---|
+| Docket API | Swagger UI | `<BASE_URL>/swagger` | Apache 2.0 |
+| Postgres | Adminer | `<BASE_URL>/adminer` | Apache 2.0 |
+| NATS | NUI | `<BASE_URL>/nui` | Apache 2.0 |
+| Valkey | P3X Redis UI | `<BASE_URL>/p3x-redis-ui` | MIT |
+| SeaweedFS | Filer UI (built-in) | `<BASE_URL>/seaweedfs` | Apache 2.0 |
+| Jaeger | Jaeger UI | `<BASE_URL>/jaeger` | Apache 2.0 |
 
 ### 🎬 See one upload land in every UI
 
@@ -105,60 +123,41 @@ Then, in order, visit each UI:
 
 | # | UI | Look for |
 |---|---|---|
-| 1 | **Adminer** | New row in `file_records` — action `upload`, owner `demo`. |
-| 2 | **Mongo Express** | New document in `docket.files` — with your filename, tags, timestamp. |
+| 1 | **Adminer → `file_records`** | New row with action `upload`, owner `demo`. |
+| 2 | **Adminer → `file_metadata`** | New row — click the `doc` JSONB cell to see the file attributes, tags, timestamp. |
 | 3 | **NUI** | New message on stream `DOCKET_EVENTS`, subject `docket.files.uploaded`. |
-| 4 | **Redis Commander** | Nothing yet — the counter appears after your first `GET /files/{id}`. |
-| 5 | **MinIO Console** | New object in bucket `docket`, name = the file's UUID. |
+| 4 | **P3X Redis UI** | Nothing yet — the counter appears after your first `GET /files/{id}`. |
+| 5 | **SeaweedFS Filer UI** | New object in bucket `docket`, name = the file's UUID. |
 | 6 | **Jaeger** | New trace under service `docket` with 6-8 spans (the flame graph). |
 
 ---
 
-### 🗃️ Postgres — the relational database
+### 🗃️ Postgres — relational + JSONB in one database
 
-**What it is.** Postgres stores **structured records** in tables, with strong
-guarantees (ACID transactions, foreign keys, SQL queries). Use it when your
-data has a clear schema, needs to be exactly right, and you want to run
-queries like "give me every audit row for user X in the last hour."
+**What it is.** Postgres stores **structured records** in tables with strong
+ACID guarantees, and — via the `JSONB` column type + GIN indexes — stores
+**open-ended documents** with query performance that rivals dedicated
+document stores. One database, two shapes of data.
 
-**How Docket uses it.** As the **audit log**. Every upload / delete inserts a
-row into `file_records` — a permanent, queryable record of *who* did *what*
-to *which* file and *when*.
+**How Docket uses it.** Two tables in the `docket` database:
+
+- **`file_records`** — the append-only audit log. Every upload / delete /
+  view inserts a row.
+- **`file_metadata`** — one row per file, with the file attributes stored
+  as a JSONB `doc` column. Different file types can attach different
+  fields (a photo has EXIF, a PDF has page counts) without a migration.
 
 **How to look inside — Adminer at `<BASE_URL>/adminer`.** The connection
 details (server, database, user) live in the Postgres Secret provisioned by
 the Portal.
 
 **What you'll see.**
-- One table: **`file_records`**. Columns: `id` (audit row ID), `file_id`
-  (the file's UUID), `owner`, `file_name`, `size_bytes`, `action`
-  (`upload` / `delete` / `view`), `created_at`.
-- Two indexes: `idx_file_records_file_id` (for looking up a file's history)
-  and `idx_file_records_created_at DESC` (for "recent activity").
-- Click **Select data** on `file_records` to see every action in reverse
-  chronological order.
-
----
-
-### 🌿 MongoDB — the document database
-
-**What it is.** Mongo stores **flexible JSON-shaped documents** instead of
-rows. Different file types attach different metadata (a photo has EXIF, a
-PDF has page counts, a Word doc has authors) — Mongo doesn't care about the
-shape. Use it when your schema is open-ended and evolves over time.
-
-**How Docket uses it.** For **file metadata**. Every upload inserts a
-document into the `files` collection under the `docket` database.
-
-**How to look inside — Mongo Express at `<BASE_URL>/mongo-express`.**
-
-**What you'll see.**
-- Database dropdown → pick **`docket`**.
-- Collection: **`files`**. Each document is one file, with fields:
-  `_id` (matches the file UUID), `file_name`, `content_type`, `size`,
-  `owner`, `description`, `tags[]`, `extra{}`, `uploaded_at`.
-- Click any document to see the full JSON. Use the search box to filter by
-  `owner`, tags, etc.
+- **`file_records`** columns: `id`, `file_id`, `owner`, `file_name`,
+  `size_bytes`, `action`, `created_at`. Indexes: `idx_file_records_file_id`,
+  `idx_file_records_created_at DESC`.
+- **`file_metadata`** columns: `id`, `uploaded_at`, `doc` (JSONB). Indexes:
+  `idx_file_metadata_uploaded_at DESC`, `idx_file_metadata_doc_gin` (GIN
+  on the JSONB — enables queries like `doc @> '{"owner":"alice"}'`).
 
 ---
 
@@ -192,20 +191,24 @@ Portal), then click it.
 
 ---
 
-### ⚡ Redis — the in-memory cache
+### ⚡ Valkey — the in-memory cache
 
-**What it is.** Redis stores **small, hot, ephemeral** key-value data —
-counters, session tokens, rate limits — in RAM. Reads are sub-millisecond,
-but data can be lost if Redis restarts (unless persistence is configured).
-Use it when speed matters more than durability.
+**What it is.** Valkey is the permissive-OSS fork of Redis (managed by the
+Linux Foundation, BSD 3-Clause). It's **wire-protocol compatible with
+Redis** — any Redis client library works unchanged — and stores small, hot,
+ephemeral key-value data in RAM. Sub-millisecond reads; data can be lost on
+restart unless persistence is configured. Use it when speed matters more
+than durability.
 
 **How Docket uses it.** For **view counters**. Every `GET /files/{id}`
 increments the key `docket:views:<file-id>`.
 
-**How to look inside — Redis Commander at `<BASE_URL>/redis-commander`.**
+**How to look inside — P3X Redis UI at `<BASE_URL>/p3x-redis-ui`.** First
+time only, add a connection pointing at the in-cluster Valkey service (name
+provided by the Portal).
 
 **What you'll see.**
-- Left sidebar → connection **`local`** → **`db0`**.
+- Left sidebar → your connection → **`db0`**.
 - Keys named **`docket:views:<uuid>`**. Each key's value is the integer
   view count.
 - Click a key to see its type (`string`), value, and TTL (currently no
@@ -213,22 +216,25 @@ increments the key `docket:views:<file-id>`.
 
 ---
 
-### 🪣 MinIO (S3) — the object store
+### 🪣 SeaweedFS — the object store (S3 API)
 
-**What it is.** MinIO is **S3 you can run yourself**. It stores raw file
-bytes (photos, PDFs, videos — anything binary) cheaply and at scale, and
-serves them via HTTP. Use it for any blob larger than ~1 KB.
+**What it is.** SeaweedFS is a **distributed object store** with an
+S3-compatible API (Apache 2.0). It stores raw file bytes (photos, PDFs,
+videos — anything binary) and serves them via HTTP. Any S3 client library
+works against it unchanged.
 
 **How Docket uses it.** For the actual file contents. Metadata about the
-file lives in Mongo/Postgres; the *bytes* live in MinIO under a bucket
+file lives in Postgres; the *bytes* live in SeaweedFS under a bucket
 called `docket`, keyed by the file's UUID.
 
-**How to look inside — MinIO Console at `<BASE_URL>/minio`.**
+**How to look inside — SeaweedFS Filer UI at `<BASE_URL>/seaweedfs`** (the
+filer UI ships with the SeaweedFS image — no separate container needed).
 
 **What you'll see.**
-- Left sidebar → **Object Browser** → bucket **`docket`**.
+- Bucket **`docket`** in the object listing.
 - Each object is a file you uploaded, named by its UUID (no extension —
-  Docket stores the original filename in Mongo, not on the object).
+  Docket stores the original filename in the `file_metadata` row, not on
+  the object).
 - Click any object to preview, download, or see its metadata
   (content-type, size, last modified).
 
@@ -243,7 +249,8 @@ was slow, not just that the request was slow.
 
 **How Docket uses it.** Every request produces one trace with a root
 `docket.http` span and child spans for each backend call
-(`minio.PutObject`, `files.insert`, `query INSERT`, `nats.Publish`, etc).
+(`s3.PutObject`, `pg.INSERT file_metadata`, `pg.INSERT file_records`,
+`nats.Publish`, etc).
 
 **How to look inside — Jaeger UI at `<BASE_URL>/jaeger`.**
 
@@ -251,8 +258,8 @@ was slow, not just that the request was slow.
 - **Service** dropdown (top left) → pick **`docket`**.
 - Click **Find Traces** — a list of every request, newest first.
 - Click any trace → a flame graph. You'll see 6-8 spans per upload:
-  the HTTP handler wrapping MinIO + Mongo + Postgres (multiple spans:
-  pool.acquire, prepare, query) + NATS.
+  the HTTP handler wrapping SeaweedFS + two Postgres tables (metadata +
+  records, each with pool.acquire / prepare / query spans) + NATS.
 - Each span shows its duration and clickable attributes (bucket name,
   SQL text, subject, message key).
 
@@ -276,7 +283,9 @@ Portal injects these from the tenant's
 | `DOCKET_API_KEY`   | API key for write endpoints. **Empty disables auth** (with a startup WARN). |
 | `LOG_LEVEL`        | `debug` / `info` / `warn` / `error`.                                        |
 
-### Postgres (audit records)
+### Postgres (audit records + JSONB metadata)
+
+Both `file_records` and `file_metadata` live in this Postgres instance.
 
 | Key                  | Purpose                          |
 |----------------------|----------------------------------|
@@ -287,13 +296,6 @@ Portal injects these from the tenant's
 | `POSTGRES_DB`        | DB name.                         |
 | `POSTGRES_SSLMODE`   | `disable` / `require` / `verify-full`. |
 
-### MongoDB (file metadata)
-
-| Key         | Purpose                |
-|-------------|------------------------|
-| `MONGO_URI` | Connection URI.        |
-| `MONGO_DB`  | Database name.         |
-
 ### NATS JetStream (upload events)
 
 | Key                    | Purpose                                              |
@@ -302,23 +304,31 @@ Portal injects these from the tenant's
 | `NATS_STREAM`          | JetStream name (auto-created on startup).            |
 | `NATS_SUBJECT_PREFIX`  | Events publish to `<prefix>.uploaded` / `.deleted`.  |
 
-### Redis (view counters)
+### Valkey (view counters)
+
+The env vars keep the `REDIS_*` names because Valkey speaks the Redis wire
+protocol and the go-redis client library uses that terminology.
 
 | Key              | Purpose             |
 |------------------|---------------------|
 | `REDIS_ADDR`     | `host:port`.        |
 | `REDIS_PASSWORD` | Optional password.  |
-| `REDIS_DB`       | Redis DB index.     |
+| `REDIS_DB`       | Valkey DB index.    |
 
-### MinIO / S3 (file bytes)
+### S3 (file bytes — SeaweedFS in this template)
 
-| Key                | Purpose                              |
-|--------------------|--------------------------------------|
-| `MINIO_ENDPOINT`   | S3 endpoint (no scheme).             |
-| `MINIO_ACCESS_KEY` | Access key (Portal-provisioned).     |
-| `MINIO_SECRET_KEY` | Secret key (Portal-provisioned).     |
-| `MINIO_BUCKET`     | Auto-created on startup if missing.  |
-| `MINIO_USE_SSL`    | `true` to talk to HTTPS S3.          |
+The env vars use vendor-neutral `S3_*` names. Under the hood the Go code
+uses the [MinIO Go SDK](https://github.com/minio/minio-go), which is a
+generic S3 client library — swap SeaweedFS for AWS S3, Ceph RGW, or any
+other S3-compatible endpoint just by changing `S3_ENDPOINT`.
+
+| Key             | Purpose                              |
+|-----------------|--------------------------------------|
+| `S3_ENDPOINT`   | S3 endpoint (no scheme).             |
+| `S3_ACCESS_KEY` | Access key (Portal-provisioned).     |
+| `S3_SECRET_KEY` | Secret key (Portal-provisioned).     |
+| `S3_BUCKET`     | Auto-created on startup if missing.  |
+| `S3_USE_SSL`    | `true` to talk to HTTPS S3.          |
 
 ### OpenTelemetry (tracing)
 
@@ -333,13 +343,13 @@ Portal injects these from the tenant's
 ## In-memory fallback
 
 Every backend adapter exposes an interface, with **two** implementations: the
-real one (e.g. `MinIO`) and an in-memory one (a Go map). At startup each
-adapter probes its backend with a short timeout; on failure it logs a loud
-`WARN` and returns the memory implementation instead.
+real one (e.g. SeaweedFS, Postgres) and an in-memory one (a Go map). At
+startup each adapter probes its backend with a short timeout; on failure it
+logs a loud `WARN` and returns the memory implementation instead.
 
 ```
-WARN minio unreachable, falling back to in-memory storage;
-     uploaded files will NOT survive restart
+WARN postgres unreachable, falling back to in-memory metadata store;
+     data will NOT survive restart
 ```
 
 Practical effects:
@@ -376,11 +386,11 @@ Live OpenAPI spec at `<BASE_URL>/openapi.json`, Swagger UI at `<BASE_URL>/swagge
 | `GET`  | `/openapi.json`            | —    | OpenAPI 3 spec.                                 |
 | `GET`  | `/swagger`                 | —    | Swagger UI.                                     |
 | `GET`  | `/files`                   | —    | List files (paginated).                         |
-| `GET`  | `/files/{id}`              | —    | File metadata + view count (increments Redis).  |
-| `GET`  | `/files/{id}/download`     | —    | Stream file bytes from MinIO.                   |
+| `GET`  | `/files/{id}`              | —    | File metadata + view count (increments Valkey). |
+| `GET`  | `/files/{id}/download`     | —    | Stream file bytes from SeaweedFS.               |
 | `GET`  | `/files/{id}/audit`        | —    | Audit trail from Postgres.                      |
 | `POST` | `/files`                   | ✅   | Multipart upload — touches all 5 backends.      |
-| `DELETE`| `/files/{id}`             | ✅   | Remove file from MinIO + Mongo + publish event. |
+| `DELETE`| `/files/{id}`             | ✅   | Remove file + metadata + publish event.         |
 | `POST` | `/seed?n=20`               | ✅   | Insert N synthetic files (max 1000).            |
 | `POST` | `/loadtest?n=1000&concurrency=50` | ✅ | Fan-out load test; returns p50/p90/p95/p99. |
 
@@ -398,9 +408,9 @@ What happens in Docket:
 
 1. A request hits `POST /files`. The [`otelhttp` middleware](https://pkg.go.dev/go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp)
    creates a root span named `docket.http`.
-2. The handler calls `Storage.Put` → MinIO. That call gets its own child span.
-3. Then `Metadata.Insert` → Mongo. Another span.
-4. Then `Records.Insert` → Postgres. Another span.
+2. The handler calls `Storage.Put` → SeaweedFS. That call gets its own child span.
+3. Then `Metadata.Insert` → Postgres `file_metadata`. Another span.
+4. Then `Records.Insert` → Postgres `file_records`. Another span.
 5. Then `Events.Publish` → NATS JetStream. Another span.
 6. The full tree is batched and sent to **Jaeger** at the URL in
    `OTEL_EXPORTER_OTLP_ENDPOINT` using the OTLP/HTTP protocol.
@@ -460,15 +470,15 @@ See [`internal/api/middleware.go`](internal/api/middleware.go).
 ├── internal/
 │   ├── api/                   — HTTP layer (router, handlers, middleware, openapi)
 │   ├── app/                   — wires every adapter into a single struct
-│   ├── cache/                 — Redis interface + redis.go + memory.go
+│   ├── cache/                 — cache interface + redis.go (Valkey) + memory.go
 │   ├── config/                — env-var loading (every os.Getenv lives here)
-│   ├── events/                — NATS interface + nats.go + memory.go
+│   ├── events/                — event bus interface + nats.go + memory.go
 │   ├── logging/               — slog JSON + request-id context
-│   ├── metadata/              — Mongo interface + mongo.go + memory.go
+│   ├── metadata/              — metadata interface + postgres.go (JSONB) + memory.go
 │   ├── metrics/               — Prometheus counters
 │   ├── otel/                  — OTLP HTTP exporter setup
-│   ├── records/               — Postgres interface + postgres.go + memory.go
-│   └── storage/               — MinIO interface + minio.go + memory.go
+│   ├── records/               — audit interface + postgres.go + memory.go
+│   └── storage/               — object-store interface + s3.go (SeaweedFS via MinIO Go SDK) + memory.go
 ├── migrations/                — SQL schema (also auto-applied at startup)
 ├── k8s/                       — Manifests for namespace, app, all backends
 └── .env.example               — every env var the app reads
@@ -476,8 +486,10 @@ See [`internal/api/middleware.go`](internal/api/middleware.go).
 
 Each adapter package follows the same shape — `<name>.go` (the interface and
 `New()` constructor), `<backend>.go` (real implementation), `memory.go`
-(in-memory fallback). To replace a backend (say, swap MinIO for AWS S3 SDK),
-write a new file alongside `minio.go` and switch on it in `New()`.
+(in-memory fallback). To replace a backend (say, swap SeaweedFS for AWS S3),
+you don't need to write new code — just point `S3_ENDPOINT` at the new
+endpoint (the S3 SDK is generic). Only if you need a fundamentally different
+API do you write a new adapter file alongside `s3.go`.
 
 ---
 
