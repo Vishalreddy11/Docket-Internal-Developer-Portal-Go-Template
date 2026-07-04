@@ -1,0 +1,14 @@
+{
+  "identities": [
+    {
+      "name": "docket",
+      "credentials": [
+        {
+          "accessKey": "docketaccesskey",
+          "secretKey": "docketsecretkey"
+        }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

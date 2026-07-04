@@ -73,14 +73,17 @@ services:
   s3:
     image: chrislusf/seaweedfs:4.22
     container_name: docket-s3
-    command: server -s3 -s3.port=9000 -dir=/data
+    command: server -s3 -s3.port=9000 -s3.config=/etc/seaweedfs/s3.json -dir=/data
     ports:
       - "9000:9000"   # S3 API
+      - "8888:8888"   # Filer HTTP (browsable file listing)
+      - "9333:9333"   # Master UI (cluster / volume status)
     volumes:
       - s3data:/data
+      - ./seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
 
   jaeger:
-    image: jaegertracing/all-in-one:1.62
+    image: jaegertracing/all-in-one:1.63.0
     container_name: docket-jaeger
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
@@ -111,7 +114,7 @@ services:
 
   # P3X Redis UI — MIT-licensed, actively maintained. Works with Valkey.
   p3x-redis-ui:
-    image: patrikx3/p3x-redis-ui:2024.10.128
+    image: patrikx3/p3x-redis-ui:2026.4.3014
     container_name: docket-p3x-redis-ui
     depends_on: [redis]
     ports:
