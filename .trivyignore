@@ -1,0 +1,22 @@
+# Documented CVE exceptions. Each entry needs a rationale + review date.
+# Format: CVE-ID (one per line). Comments explain WHY it's accepted.
+
+# --- jaegertracing/jaeger:latest (v2) ---
+# Alpine 3.23.4 base ships openssl 3.5.6-r0; upstream fix in 3.5.7-r0 is
+# available in alpine repos, but the maintainer has not rebuilt the image yet.
+# Jaeger's HTTP surface does not expose the vulnerable TLS parsing path.
+# Review after next jaegertracing/jaeger release: check https://github.com/jaegertracing/jaeger/releases
+CVE-2026-45447
+
+# Go stdlib in jaeger:latest binary is 1.26.3; fix requires 1.26.4 (or 1.25.11).
+# Maintainer rebuild pending. Both CVEs are in the same stdlib bump.
+CVE-2026-27145
+CVE-2026-42504
+
+# --- chrislusf/seaweedfs:latest ---
+# apache/thrift v0.22.0 embedded in the Go binary. Fixed in thrift 0.23.0
+# upstream. SeaweedFS uses thrift only on the internal master/volume/filer
+# wire protocol, not on the S3 API surface. Waiting on chrislusf to
+# release a build against thrift 0.23.0.
+# Review after next SeaweedFS release: https://github.com/seaweedfs/seaweedfs/releases
+CVE-2026-41602

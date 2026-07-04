@@ -1,6 +1,7 @@
 services:
   docket:
     build: .
+    image: docket:local
     container_name: docket
     depends_on:
       - postgres
@@ -34,7 +35,7 @@ services:
       - "8080:8080"
 
   postgres:
-    image: postgres:16-alpine
+    image: cgr.dev/chainguard/postgres:latest
     container_name: docket-postgres
     environment:
       POSTGRES_USER: docket
@@ -60,7 +61,7 @@ services:
   # Valkey — Redis-protocol-compatible fork under the Linux Foundation.
   # BSD 3-Clause. Service name kept as "redis" so REDIS_ADDR stays unchanged.
   redis:
-    image: valkey/valkey:9.1-alpine
+    image: cgr.dev/chainguard/valkey:latest
     container_name: docket-redis
     ports:
       - "6379:6379"
@@ -71,7 +72,7 @@ services:
   # For prod: add -s3.config=/etc/seaweedfs/s3.json to enforce identities;
   # without it SeaweedFS accepts requests without validating the AWS v4 signature.
   s3:
-    image: chrislusf/seaweedfs:4.22
+    image: chrislusf/seaweedfs:latest
     container_name: docket-s3
     command: server -s3 -s3.port=9000 -s3.config=/etc/seaweedfs/s3.json -dir=/data
     ports:
@@ -83,7 +84,7 @@ services:
       - ./seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
 
   jaeger:
-    image: jaegertracing/all-in-one:1.63.0
+    image: jaegertracing/jaeger:latest
     container_name: docket-jaeger
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
@@ -122,9 +123,38 @@ services:
     volumes:
       - p3xdata:/settings
 
+  # ===== Vulnerability scanning =====
+
+  # Trivy — one-shot scanner. Reads every image in the stack via the docker
+  # socket, writes per-image HTML + JSON reports to ./trivy-reports/, then
+  # exits. Re-scan any time with:  docker compose up trivy
+  trivy:
+    image: aquasec/trivy:latest
+    container_name: docket-trivy
+    depends_on: [docket]
+    volumes:
+      - trivycache:/root/.cache/
+      - ./trivy-reports:/reports
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./trivy/scan.sh:/scan.sh:ro
+      - ./.trivyignore:/.trivyignore:ro
+    entrypoint: ["/bin/sh", "/scan.sh"]
+    restart: "no"
+
+  # Static nginx serving the report directory. Open http://localhost:8090
+  # once Trivy has finished at least one run.
+  trivy-ui:
+    image: nginx:alpine
+    container_name: docket-trivy-ui
+    ports:
+      - "8090:80"
+    volumes:
+      - ./trivy-reports:/usr/share/nginx/html:ro
+
 volumes:
   pgdata:
   natsdata:
   s3data:
   nuidata:
   p3xdata:
+  trivycache:
